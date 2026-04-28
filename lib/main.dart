@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'dart:convert';
+import 'package:shared_preferences/shared_preferences.dart';
 
 void main() {
   runApp(const MyApp());
@@ -25,6 +27,20 @@ class UserModel {
     required this.nama,
     required this.umur,
   });
+
+  Map<String, dynamic> toJson() => {
+        "id": id,
+        "nama": nama,
+        "umur": umur,
+      };
+
+  factory UserModel.fromJson(Map<String, dynamic> json) {
+    return UserModel(
+      id: json["id"],
+      nama: json["nama"],
+      umur: json["umur"],
+    );
+  }
 }
 
 class ListUserDataPage extends StatefulWidget {
@@ -35,15 +51,37 @@ class ListUserDataPage extends StatefulWidget {
 }
 
 class _ListUserDataPageState extends State<ListUserDataPage> {
-  List<UserModel> userList = [
-    UserModel(id: 1, nama: "satu", umur: 10),
-    UserModel(id: 2, nama: "dua", umur: 11),
-    UserModel(id: 3, nama: "tiga", umur: 12),
-    UserModel(id: 4, nama: "empat", umur: 13),
-  ];
+  List<UserModel> userList = [];
+  bool isLoading = true;
 
   final TextEditingController nameController = TextEditingController();
   final TextEditingController umurController = TextEditingController();
+
+  @override
+  void initState() {
+    super.initState();
+    loadData();
+  }
+
+  Future<void> saveData() async {
+    final prefs = await SharedPreferences.getInstance();
+    List data = userList.map((e) => e.toJson()).toList();
+    await prefs.setString("users", jsonEncode(data));
+  }
+
+  Future<void> loadData() async {
+    final prefs = await SharedPreferences.getInstance();
+    final dataString = prefs.getString("users");
+
+    if (dataString != null) {
+      List data = jsonDecode(dataString);
+      userList = data.map((e) => UserModel.fromJson(e)).toList();
+    }
+
+    setState(() {
+      isLoading = false;
+    });
+  }
 
   void form({int? id}) {
     if (id != null) {
@@ -71,29 +109,30 @@ class _ListUserDataPageState extends State<ListUserDataPage> {
             children: [
               TextField(
                 controller: nameController,
-                decoration: const InputDecoration(
-                  labelText: "Nama",
-                ),
+                decoration: const InputDecoration(labelText: "Nama"),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: umurController,
                 keyboardType: TextInputType.number,
-                decoration: const InputDecoration(
-                  labelText: "Umur",
-                ),
+                decoration: const InputDecoration(labelText: "Umur"),
               ),
               const SizedBox(height: 20),
               ElevatedButton(
                 onPressed: () {
-                  final nama = nameController.text;
+                  final nama = nameController.text.trim();
                   final umur = int.tryParse(umurController.text) ?? 0;
 
-                  handleSave(
-                    id: id,
-                    nama: nama,
-                    umur: umur,
-                  );
+                  if (nama.isEmpty || umur <= 0) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text("Nama dan umur harus valid"),
+                      ),
+                    );
+                    return;
+                  }
+
+                  handleSave(id: id, nama: nama, umur: umur);
                 },
                 child: Text(id == null ? "Tambahkan" : "Perbaiki"),
               )
@@ -117,8 +156,12 @@ class _ListUserDataPageState extends State<ListUserDataPage> {
         user.umur = umur;
       });
     } else {
-      final nextId =
-          userList.isNotEmpty ? (userList.last.id ?? 0) + 1 : 1;
+      final nextId = userList.isEmpty
+          ? 1
+          : userList
+                  .map((e) => e.id ?? 0)
+                  .reduce((a, b) => a > b ? a : b) +
+              1;
 
       final newUser = UserModel(
         id: nextId,
@@ -131,6 +174,7 @@ class _ListUserDataPageState extends State<ListUserDataPage> {
       });
     }
 
+    saveData();
     Navigator.pop(context);
   }
 
@@ -152,6 +196,8 @@ class _ListUserDataPageState extends State<ListUserDataPage> {
                 setState(() {
                   userList.removeWhere((element) => element.id == id);
                 });
+
+                saveData();
                 Navigator.pop(context);
               },
               child: const Text("Hapus"),
@@ -163,42 +209,51 @@ class _ListUserDataPageState extends State<ListUserDataPage> {
   }
 
   @override
+  void dispose() {
+    nameController.dispose();
+    umurController.dispose();
+    super.dispose();
+  }
+
+  @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text("List User"),
       ),
-      body: ListView.builder(
-        itemCount: userList.length,
-        itemBuilder: (context, index) {
-          final user = userList[index];
+      body: isLoading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView.builder(
+              itemCount: userList.length,
+              itemBuilder: (context, index) {
+                final user = userList[index];
 
-          return Card(
-            margin: const EdgeInsets.all(10),
-            child: ListTile(
-              title: Text(user.nama),
-              subtitle: Text("Umur: ${user.umur}"),
-              trailing: Row(
-                mainAxisSize: MainAxisSize.min, // FIX ERROR
-                children: [
-                  IconButton(
-                    onPressed: () => form(id: user.id),
-                    icon: const Icon(Icons.edit),
+                return Card(
+                  margin: const EdgeInsets.all(10),
+                  child: ListTile(
+                    title: Text(user.nama),
+                    subtitle: Text("Umur: ${user.umur}"),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton(
+                          onPressed: () => form(id: user.id),
+                          icon: const Icon(Icons.edit),
+                        ),
+                        IconButton(
+                          onPressed: () {
+                            if (user.id != null) {
+                              delete(user.id!);
+                            }
+                          },
+                          icon: const Icon(Icons.delete),
+                        ),
+                      ],
+                    ),
                   ),
-                  IconButton(
-                    onPressed: () {
-                      if (user.id != null) {
-                        delete(user.id!);
-                      }
-                    },
-                    icon: const Icon(Icons.delete),
-                  ),
-                ],
-              ),
+                );
+              },
             ),
-          );
-        },
-      ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => form(),
         child: const Icon(Icons.add),
